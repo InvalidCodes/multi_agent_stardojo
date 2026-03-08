@@ -6,7 +6,15 @@ import base64
 import sys
 import os
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Make both this directory and the project root importable, so running from inside
+# `env/` (or from repo root) works consistently.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_THIS_DIR)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
 from utils import utils
 
 sys.path.append(os.path.dirname((os.path.abspath(__file__))))
@@ -20,14 +28,16 @@ import time
 import socket
 import datetime
 import socket
-import cv2
+try:
+    import cv2  # optional dependency (only required when output_video=True)
+except ModuleNotFoundError:
+    cv2 = None
 from collections import deque
 import dotenv
 
 dotenv.load_dotenv()
 
-STARDEW_APP_PATH = os.getenv("STARDEW_APP_PATH")
-mod_path = STARDEW_APP_PATH
+STARDEW_APP_PATH = os.getenv("STARDEW_APP_PATH", "")
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 object_id_path = os.path.join(base_dir, 'game_data/Objects.json')
@@ -39,7 +49,41 @@ if os_type == "Windows":
     import win32con
     import win32gui
 
-LAUNCH_PATH = os.path.expanduser(mod_path)
+def _resolve_launch_path(stardew_app_path: str) -> str:
+    """
+    Resolve the executable used to launch the game+SMAPI.
+    Docs recommend STARDEW_APP_PATH points to the file path of StardewModdingAPI(.exe),
+    but we also accept a directory for convenience.
+    """
+    if not stardew_app_path:
+        raise EnvironmentError(
+            "STARDEW_APP_PATH is not set. Please set it to the file path of StardewModdingAPI.exe "
+            "(or the install directory containing it)."
+        )
+
+    p = os.path.expanduser(stardew_app_path)
+    if os.path.isdir(p):
+        if os_type == "Windows":
+            candidates = [
+                os.path.join(p, "StardewModdingAPI.exe"),
+                os.path.join(p, "StardewModdingAPI"),
+            ]
+        else:
+            candidates = [os.path.join(p, "StardewModdingAPI")]
+        for c in candidates:
+            if os.path.exists(c):
+                return c
+        raise FileNotFoundError(
+            f"STARDEW_APP_PATH points to a directory, but StardewModdingAPI was not found inside it: {p}"
+        )
+
+    # File path
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"STARDEW_APP_PATH does not exist: {p}")
+    return p
+
+
+LAUNCH_PATH = _resolve_launch_path(STARDEW_APP_PATH)
 PORT_ARG = "--port-id"
 SAMPLE_RATE = "--sample-rate" # percentage
 
@@ -171,10 +215,18 @@ class StarDojo(gym.Env):
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = win32con.SW_HIDE  
 
-                    subprocess.Popen([LAUNCH_PATH, PORT_ARG, str(self.port), SAMPLE_RATE, "100", "--background"],
-                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL,
-                                     startupinfo=startupinfo)
+                    try:
+                        subprocess.Popen(
+                            [LAUNCH_PATH, PORT_ARG, str(self.port), SAMPLE_RATE, "100", "--background"],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            startupinfo=startupinfo,
+                            cwd=os.path.dirname(LAUNCH_PATH),
+                        )
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"Failed to launch StardewModdingAPI from LAUNCH_PATH={LAUNCH_PATH}. "
+                            f"Check STARDEW_APP_PATH and file permissions. Error: {e}"
+                        ) from e
 
                 elif os_type == "Darwin":
                     subprocess.Popen([LAUNCH_PATH, PORT_ARG, str(self.port), SAMPLE_RATE, "100"],
@@ -198,7 +250,12 @@ class StarDojo(gym.Env):
         self.image_paths = deque(maxlen=max_image_storage)
         self.step_count = 0
 
-        self.output_video_path = f'output_{datetime.datetime.now().strftime("%m-%d %H:%M:%S")}.mp4'  
+        # Windows-safe filename (avoid ":" in timestamp)
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        video_dir = self.image_save_path or os.path.dirname(os.path.abspath(__file__))
+        video_dir = os.path.join(video_dir, "output_videos")
+        os.makedirs(video_dir, exist_ok=True)
+        self.output_video_path = os.path.join(video_dir, f"output_{ts}_port_{self.port}.mp4")
         self.frame_rate = 30 
         self.video_writer = None
         self.output_video = output_video
@@ -223,7 +280,8 @@ class StarDojo(gym.Env):
     def exit(self):
         if self.video_writer is not None:
             self.video_writer.release()
-            cv2.destroyAllWindows()
+            if cv2 is not None:
+                cv2.destroyAllWindows()
             self.video_writer = None
 
     def _get_obs(self, is_rl = False) -> dict:
@@ -287,6 +345,11 @@ class StarDojo(gym.Env):
         else:
             img_path = "" # No img_save_path
         if self.output_video:
+            if cv2 is None:
+                raise ModuleNotFoundError(
+                    "OpenCV (cv2) is required when output_video=True. "
+                    "Install it with: pip install opencv-python"
+                )
             rgb_image = obs['ScreenShot'][:, :, :3].astype(np.uint8)
             if self.video_writer is None:
                 h, w, _ = rgb_image.shape  

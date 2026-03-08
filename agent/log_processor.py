@@ -113,6 +113,10 @@ def process_log_messages(work_dir):
 
     log_path = os.path.join(work_dir, "logs/stardojo.log")
 
+    if not os.path.exists(log_path):
+        # If the run exits early (e.g. environment init failure), the log file may not exist yet.
+        return f"[log_processor] Log file not found: {log_path}\n"
+
     with open(log_path, "r", encoding="utf-8") as fd:
         log = fd.read()
 

@@ -16,7 +16,12 @@ from stardojo.environment.ui_control_factory import UIControlFactory
 from stardojo.gameio.io_env import IOEnvironment
 from stardojo.gameio.game_manager import GameManager
 from stardojo.planner.stardew_planner import StardewPlanner
-from log_processor import process_log_messages
+try:
+    # `log_processor.py` lives under `agent/` in this repo (not a pip package).
+    from agent.log_processor import process_log_messages
+except ModuleNotFoundError:
+    # Backward-compatible fallback for environments that put repo root on sys.path differently.
+    from log_processor import process_log_messages
 from env.stardew_env import *
 import logging
 from env.env_constants import *
@@ -85,34 +90,50 @@ class PipelineRunner():
         return logger
 
     def set_internal_params(self, *args, **kwargs):
+        t0 = time.time()
+        logger.write("[DEBUG] PipelineRunner.set_internal_params: start")
 
         self.provider_configs = config.provider_configs
 
         # Init LLM and embedding provider(s)
+        t = time.time()
+        logger.write("[DEBUG] Creating LLM + embedding providers...")
         lf = LLMFactory()
         self.llm_provider, self.embed_provider = lf.create(self.llm_provider_config_path,
                                                            self.embed_provider_config_path)
+        logger.write(f"[DEBUG] Providers created in {time.time() - t:.2f}s")
 
         srf = SkillRegistryFactory()
         srf.register_builder(config.env_short_name, config.skill_registry_name)
+        t = time.time()
+        logger.write("[DEBUG] Creating skill registry (this may compute embeddings + write skill library)...")
         self.skill_registry = srf.create(config.env_short_name, skill_configs=config.skill_configs,
                                          embedding_provider=self.embed_provider)
+        logger.write(f"[DEBUG] Skill registry created in {time.time() - t:.2f}s")
 
         ucf = UIControlFactory()
         ucf.register_builder(config.env_short_name, config.ui_control_name)
+        t = time.time()
+        logger.write("[DEBUG] Creating UI control...")
         self.env_ui_control = ucf.create(config.env_short_name)
+        logger.write(f"[DEBUG] UI control created in {time.time() - t:.2f}s")
 
         # Init game manager
+        t = time.time()
+        logger.write("[DEBUG] Creating GameManager...")
         self.gm = GameManager(env_name=config.env_name,
                               embedding_provider=self.embed_provider,
                               llm_provider=self.llm_provider,
                               skill_registry=self.skill_registry,
                               ui_control=self.env_ui_control,
                               )
+        logger.write(f"[DEBUG] GameManager created in {time.time() - t:.2f}s")
 
         self.memory = LocalMemory()
 
         # Init planner
+        t = time.time()
+        logger.write("[DEBUG] Creating planner...")
         self.planner = StardewPlanner(llm_provider=self.llm_provider,
                                    planner_params=config.planner_params,
                                    frame_extractor=None,
@@ -120,13 +141,20 @@ class PipelineRunner():
                                    object_detector=None,
                                    use_self_reflection=True,
                                    use_task_inference=True)
+        logger.write(f"[DEBUG] Planner created in {time.time() - t:.2f}s")
 
         # Init skill library
+        t = time.time()
+        logger.write("[DEBUG] Retrieving relevant skills...")
         skills = self.gm.retrieve_skills(query_task=self.task_description,
                                          skill_num=config.skill_configs[constants.SKILL_CONFIG_MAX_COUNT],
                                          screen_type=constants.GENERAL_GAME_INTERFACE)
+        logger.write(f"[DEBUG] Retrieved {len(skills) if skills else 0} skills in {time.time() - t:.2f}s")
 
+        t = time.time()
+        logger.write("[DEBUG] Building skill_library payload...")
         self.skill_library = self.gm.get_skill_information(skills, config.skill_library_with_code)
+        logger.write(f"[DEBUG] skill_library built in {time.time() - t:.2f}s")
 
         self.memory.update_info_history({"skill_library": self.skill_library})
 
@@ -167,6 +195,7 @@ class PipelineRunner():
         }
 
         self.memory.update_info_history(init_params)
+        logger.write(f"[DEBUG] PipelineRunner.set_internal_params: done in {time.time() - t0:.2f}s")
 
     def pipeline_shutdown(self):
 

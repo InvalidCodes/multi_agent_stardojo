@@ -1,4 +1,5 @@
 {
     "key_var": "CLAUDE_KEY",
-    "comp_model": "claude-3-7-sonnet-20250219"
+    "comp_model": "claude-3-7-sonnet-20250219",
+    "base_url": "http://14.103.68.46/v1"
 }

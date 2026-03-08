@@ -36,6 +36,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+env/screen_shot_buffer/
 
 
 # PyInstaller

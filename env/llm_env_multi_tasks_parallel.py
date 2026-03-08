@@ -1,17 +1,24 @@
-import logging
+import os
 import importlib.util
 import uuid
 import sys
+import logging
 
-from stardew_env import *
+# Ensure project root is importable no matter where this script is executed from.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_THIS_DIR)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+from env.stardew_env import *
 from agent.stardojo.stardojo_react_agent import *
-from tasks.base import *
 from env.tasks.utils import load_task
 import env.tasks.open as debug_task
 from env.tasks.utils.init_task import InitTaskProxy
 from typing import Any
 from pathlib import Path
-import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 import argparse
 import multiprocessing as mp

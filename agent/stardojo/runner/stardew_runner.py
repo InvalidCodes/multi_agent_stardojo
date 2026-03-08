@@ -35,7 +35,10 @@ from stardojo.gameio.game_manager import GameManager
 
 
 from stardojo.planner.stardew_planner import StardewPlanner
-from log_processor import process_log_messages
+try:
+    from agent.log_processor import process_log_messages
+except ModuleNotFoundError:
+    from log_processor import process_log_messages
 
 config = Config()
 logger = Logger()

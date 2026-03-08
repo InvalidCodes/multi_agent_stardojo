@@ -6,7 +6,11 @@ from .base.base_llm import LLMProvider
 from .llm.openai import OpenAIProvider
 from .llm.claude import ClaudeProvider
 from .llm.restful_claude import RestfulClaudeProvider
-from .llm.gemini import GeminiProvider
+try:
+    from .llm.gemini import GeminiProvider
+except ModuleNotFoundError:
+    # Optional dependency (`google-genai`) is not installed.
+    GeminiProvider = None
 
 # from .circle_detector import CircleDetectProvider
 # from .sam_provider import SamProvider
@@ -69,7 +73,7 @@ __all__ = [
     "OpenAIProvider",
     "ClaudeProvider",
     "RestfulClaudeProvider",
-    "GeminiProvider",
+    # "GeminiProvider" is appended below if available.
 
     # Object detection provider
     "GdProvider",
@@ -134,3 +138,6 @@ __all__ = [
     "StardewActionPlanningProvider",
     "StardewTaskInferenceProvider",
 ]
+
+if GeminiProvider is not None:
+    __all__.append("GeminiProvider")

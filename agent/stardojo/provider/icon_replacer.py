@@ -1,8 +1,14 @@
 import os
 
-import cv2
+try:
+    import cv2  # optional dependency
+except ModuleNotFoundError:
+    cv2 = None
 import numpy as np
-from MTM import matchTemplates
+try:
+    from MTM import matchTemplates  # type: ignore
+except ModuleNotFoundError:
+    matchTemplates = None
 
 from stardojo.config import Config
 
@@ -76,6 +82,13 @@ class IconReplacer:
 
 
     def _get_mtm_match(self, image: np.ndarray, template: np.ndarray, template_name):
+        if cv2 is None:
+            raise ModuleNotFoundError("OpenCV (cv2) is required for icon matching. Install with: pip install opencv-python")
+        if matchTemplates is None:
+            raise ModuleNotFoundError(
+                "MTM is required for icon matching (template matching). "
+                "Install the dependency that provides the `MTM` module, then retry."
+            )
         detection = matchTemplates([(template_name, cv2.resize(template, (round(template.shape[1] * s), round(template.shape[0] * s)))) for s in [0.9, 1, 1.1]],
                                 image,
                                 N_object=1,

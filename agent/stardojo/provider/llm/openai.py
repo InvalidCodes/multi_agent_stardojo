@@ -31,8 +31,8 @@ config = Config()
 logger = Logger()
 
 MAX_TOKENS = {
-    "gpt-3.5-turbo-0301": 4097,
-    "gpt-3.5-turbo-0613": 4097,
+    "gpt-5.2": 4097,
+    "gpt-5.1": 4097,
     "gpt-3.5-turbo-16k-0613": 16385,
 }
 
@@ -43,6 +43,8 @@ PROVIDER_SETTING_IS_AZURE = "is_azure"
 PROVIDER_SETTING_BASE_VAR = "base_var"       # Azure-speficic setting
 PROVIDER_SETTING_API_VERSION = "api_version" # Azure-speficic setting
 PROVIDER_SETTING_DEPLOYMENT_MAP = "models"   # Azure-speficic setting
+PROVIDER_SETTING_BASE_URL = "base_url"       # Optional: OpenAI-compatible base URL (e.g. http://host:port/v1)
+PROVIDER_SETTING_BASE_URL_VAR = "base_url_var"  # Optional: env var name containing base_url
 
 
 class OpenAIProvider(LLMProvider, EmbeddingProvider):
@@ -105,9 +107,14 @@ class OpenAIProvider(LLMProvider, EmbeddingProvider):
                 azure_endpoint = endpoint
             )
         else:
+            base_url = conf_dict.get(PROVIDER_SETTING_BASE_URL)
+            base_url_var = conf_dict.get(PROVIDER_SETTING_BASE_URL_VAR)
+            if base_url_var:
+                base_url = os.getenv(base_url_var, base_url)
+
             if self.is_opensource:
-                base_url = conf_dict["base_url"]
-                key = os.getenv("OPEN_SRC_KEY")
+                # Backward compatible: prefer config's key_var, fall back to OPEN_SRC_KEY if set.
+                key = os.getenv(key_var_name) or os.getenv("OPEN_SRC_KEY")
                 self.client = OpenAI(
                     api_key = key,
                     base_url = base_url
@@ -115,9 +122,11 @@ class OpenAIProvider(LLMProvider, EmbeddingProvider):
 
             else:
                 key = os.getenv(key_var_name)
-                self.client = OpenAI(
-                    api_key=key
-                )
+                if base_url:
+                    # Support OpenAI-compatible endpoints (self-hosted proxies, gateways, etc.)
+                    self.client = OpenAI(api_key=key, base_url=base_url)
+                else:
+                    self.client = OpenAI(api_key=key)
 
         self.embedding_model = conf_dict[PROVIDER_SETTING_EMB_MODEL]
         self.llm_model = conf_dict[PROVIDER_SETTING_COMP_MODEL]

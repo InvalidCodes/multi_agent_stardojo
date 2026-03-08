@@ -1,11 +1,21 @@
-import os.path
+import os
+import sys
+import time
+import atexit
 
-from stardew_env import *
+# Ensure project root is importable no matter where this script is executed from.
+# This fixes cases like: `cd env && python llm_env.py` where `import env...` would fail.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_THIS_DIR)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+from env.stardew_env import *
 from agent.stardojo.stardojo_react_agent import *
-from tasks.base import *
 import importlib.util
 import uuid
-import sys
 import logging
 from env.tasks.base import *
 from env.tasks.utils import load_task
@@ -390,7 +400,7 @@ def run_stardojo(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run StarDojo LLM Task")
-    parser.add_argument("--port", type=int, default=6000, help="Port number for the environment")
+    parser.add_argument("--port", type=int, default=10783, help="Port number for the environment")
     parser.add_argument("--save_index", type=int, default=0, help="Save index slot")
     parser.add_argument("--new_game", action="store_true", help="Start a new game")
     parser.add_argument("--image_save_path", type=str, default="../env/screen_shot_buffer", help="Directory to save screenshots")

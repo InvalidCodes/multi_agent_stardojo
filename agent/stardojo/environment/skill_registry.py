@@ -65,6 +65,9 @@ class SkillRegistry():
         super(SkillRegistry, self).__init__()
 
         self.skill_from_default = skill_configs[constants.SKILL_CONFIG_FROM_DEFAULT]
+        # Whether to use embedding-based retrieval. If False, we will not call the embedding API
+        # (useful for Basic mode or offline runs).
+        self.skill_retrieval = skill_configs[constants.SKILL_CONFIG_RETRIEVAL]
         self.skill_mode = skill_configs[constants.SKILL_CONFIG_MODE]
         self.skill_names_basic = skill_configs[constants.SKILL_CONFIG_NAMES_BASIC]
         self.skill_names_allow = skill_configs[constants.SKILL_CONFIG_NAMES_ALLOW]
@@ -91,6 +94,12 @@ class SkillRegistry():
 
         self.skills = {}
 
+        logger.write(
+            f"[DEBUG] SkillRegistry init: mode={self.skill_mode}, from_default={self.skill_from_default}, "
+            f"retrieval={self.skill_retrieval}, "
+            f"registered_skills={len(self.skill_registered) if self.skill_registered else 0}"
+        )
+        t0 = time.time()
         os.makedirs(config.skill_local_path, exist_ok=True)
         if self.skill_from_default and os.path.exists(os.path.join(config.skill_local_path, self.skill_library_filename)):
             self.skills = self.load_skills_from_file(os.path.join(config.skill_local_path, self.skill_library_filename))
@@ -98,13 +107,21 @@ class SkillRegistry():
             self.skills = self.load_skills_from_scripts()
 
         self.skills = self.filter_skills(self.skills)
+        logger.write(f"[DEBUG] SkillRegistry init done: skills={len(self.skills)} in {time.time() - t0:.2f}s")
 
 
     def set_embedding_provider(self, embedding_provider):
         self.embedding_provider = embedding_provider
 
 
+    def _dummy_embedding(self) -> np.ndarray:
+        # `text-embedding-ada-002` is 1536 dims; we store float64 to match existing serialization logic.
+        return np.zeros((1536,), dtype=np.float64)
+
+
     def get_embedding(self, skill_name, skill_doc):
+        if not self.skill_retrieval or self.embedding_provider is None:
+            return self._dummy_embedding()
         return np.array(self.embedding_provider.embed_query('{}: {}'.format(skill_name, skill_doc)))
 
 
@@ -154,7 +171,9 @@ class SkillRegistry():
         logger.write("Loading skills from scripts")
 
         skills = {}
-        for skill_name in self.skill_registered.keys():
+        all_names = list(self.skill_registered.keys())
+        total = len(all_names)
+        for idx, skill_name in enumerate(all_names, start=1):
 
             skill_embedding = self.skill_registered[skill_name].skill_embedding
             skill_code_base64 = base64.b64encode(self.skill_registered[skill_name].skill_code.encode('utf-8')).decode('utf-8')
@@ -167,22 +186,31 @@ class SkillRegistry():
             if not is_valid_value(skill_embedding): # The skill_embedding is invalid
                 regenerate_flag = True
 
+            if not self.skill_retrieval:
+                # Skip all embedding generation when retrieval is disabled.
+                regenerate_flag = False
+
             if not regenerate_flag:
                 logger.debug(f"No need to regenerate skill {skill_name}")
                 skills[skill_name] = Skill(skill_name,
                                            self.skill_registered[skill_name].skill_function,
-                                           self.skill_registered[skill_name].skill_embedding,
+                                           self.skill_registered[skill_name].skill_embedding if self.skill_retrieval else self._dummy_embedding(),
                                            self.skill_registered[skill_name].skill_code,
                                            skill_code_base64)
             else: # skill_code has been modified, we should recompute embedding
-                logger.write(f"Regenerate skill {skill_name}")
+                logger.write(f"[DEBUG] ({idx}/{total}) Regenerate skill {skill_name}: embedding start")
+                t_embed = time.time()
                 skills[skill_name] = Skill(skill_name,
                                            self.skill_registered[skill_name].skill_function,
                                            self.get_embedding(skill_name, inspect.getdoc(self.skill_registered[skill_name].skill_function)),
                                            self.skill_registered[skill_name].skill_code,
                                            skill_code_base64)
+                logger.write(f"[DEBUG] ({idx}/{total}) Regenerate skill {skill_name}: embedding done in {time.time() - t_embed:.2f}s")
 
+        t_save = time.time()
+        logger.write(f"[DEBUG] Writing skill library to disk ({total} skills)...")
         self.store_skills_to_file(os.path.join(config.skill_local_path, self.skill_library_filename), skills)
+        logger.write(f"[DEBUG] Skill library written in {time.time() - t_save:.2f}s")
 
         return skills
 
@@ -511,19 +539,25 @@ class SkillRegistry():
         skill_num = min(skill_num, len(self.skills))
         target_skills = [skill for skill in self.recent_skills]
 
-        task_emb = np.array(self.embedding_provider.embed_query(query_task))
+        if not self.skill_retrieval or self.embedding_provider is None:
+            # No embedding-based ranking. For Basic mode, prefer the env-configured order.
+            base_list = self.skill_names_basic if (self.skill_mode == constants.SKILL_LIB_MODE_BASIC and self.skill_names_basic) else list(self.skills.keys())
+            for name in base_list:
+                if len(target_skills) >= skill_num:
+                    break
+                if name in self.skills and name not in target_skills:
+                    target_skills.append(name)
+        else:
+            task_emb = np.array(self.embedding_provider.embed_query(query_task))
+            sorted_skills = sorted(self.skills.items(), key=lambda x: -np.dot(x[1].skill_embedding, task_emb))
 
-        sorted_skills = sorted(self.skills.items(), key=lambda x: -np.dot(x[1].skill_embedding, task_emb))
-
-        for skill in sorted_skills:
-
-            skill_name, skill = skill
-
-            if len(target_skills) >= skill_num:
-                break
-            else:
-                if skill_name not in target_skills:
-                    target_skills.append(skill_name)
+            for skill in sorted_skills:
+                skill_name, skill = skill
+                if len(target_skills) >= skill_num:
+                    break
+                else:
+                    if skill_name not in target_skills:
+                        target_skills.append(skill_name)
 
         self.recent_skills = []
 
@@ -562,4 +596,5 @@ class SkillRegistry():
                              file_path: str,
                              skills: Dict[str, Skill]) -> None:
         serialized_skills = serialize_skills(skills)
-        save_json(file_path, serialized_skills, indent=4)
+        # Writing the full skill library can be large; compact JSON is much faster.
+        save_json(file_path, serialized_skills, indent=-1)

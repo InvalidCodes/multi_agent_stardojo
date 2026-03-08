@@ -1,8 +1,14 @@
 import os, time, math
 import mss
-import cv2
+try:
+    import cv2  # optional dependency
+except ModuleNotFoundError:
+    cv2 = None
 import numpy as np
-from MTM import matchTemplates
+try:
+    from MTM import matchTemplates  # type: ignore
+except ModuleNotFoundError:
+    matchTemplates = None
 from stardojo.config import Config
 from stardojo.log import Logger
 from stardojo.utils.file_utils import assemble_project_path
@@ -60,6 +66,13 @@ def go_to_icon(target: str = "store", iterations=None, terminal_threshold=None, 
 
 # @TODO: This should be merged with the one in utils/template_matching.py
 def match_template(src_file, template_file, template_resize_scale=1, debug=False, character=None):
+    if cv2 is None:
+        raise ModuleNotFoundError("OpenCV (cv2) is required for this skill. Install with: pip install opencv-python")
+    if matchTemplates is None:
+        raise ModuleNotFoundError(
+            "MTM is required for this skill (template matching). "
+            "Install the dependency that provides the `MTM` module, then retry."
+        )
     srcimg = cv2.imread(assemble_project_path(src_file))
     template = cv2.imread(assemble_project_path(template_file))
 

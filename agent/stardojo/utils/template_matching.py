@@ -3,8 +3,17 @@ import os
 import time
 from typing import List, Union
 
-import cv2
-from MTM import matchTemplates, drawBoxesOnRGB
+try:
+    import cv2  # optional dependency (required only for template matching / CV utilities)
+except ModuleNotFoundError:
+    cv2 = None
+
+try:
+    # Multi-Template-Matching dependency (optional). Some environments don't need UI template matching.
+    from MTM import matchTemplates, drawBoxesOnRGB  # type: ignore
+except ModuleNotFoundError:
+    matchTemplates = None
+    drawBoxesOnRGB = None
 import numpy as np
 from PIL import Image
 
@@ -16,6 +25,18 @@ from stardojo.utils.json_utils import save_json
 
 config = Config()
 logger = Logger()
+
+
+def _require_cv_and_mtm() -> None:
+    if cv2 is None:
+        raise ModuleNotFoundError(
+            "OpenCV (cv2) is required for template matching. Install with: pip install opencv-python"
+        )
+    if matchTemplates is None or drawBoxesOnRGB is None:
+        raise ModuleNotFoundError(
+            "MTM is required for template matching (Multi-Template-Matching). "
+            "Install the dependency that provides the `MTM` module, then retry."
+        )
 
 
 def render(overlay, template_image, output_file_name='', view=False):
@@ -50,6 +71,7 @@ def timing(func):
 
 # @timing
 def get_mtm_match(image: np.ndarray, template: np.ndarray, scales: list):
+    _require_cv_and_mtm()
     detection = matchTemplates([('', cv2.resize(template, (0, 0), fx=s, fy=s)) for s in scales], image, N_object=1, method=cv2.TM_CCOEFF_NORMED, maxOverlap=0.1)
     detection['TemplateName'] = [str(round(i, 3)) for i in detection['Score']]  # confidence as name for display
     return detection
@@ -69,6 +91,8 @@ def match_template_image(src_file: str, template_file: str, debug = False, outpu
     :return:
     objects_list, a list of dicts, including template name, bounding box and confidence.
     '''
+
+    _require_cv_and_mtm()
 
     output_dir = config.work_dir
     tid = time.time()

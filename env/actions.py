@@ -66,14 +66,28 @@ class SharedMemoryReader:
         self.mmap_size = mmap_size
 
         os_type = platform.system()
-        stardew_app_path = os.getenv("STARDEW_APP_PATH")
-        stardew_app_parent_path = os.path.dirname(stardew_app_path)
-        if os_type == "Linux":
-            mmap_file = os.path.join(f"{stardew_app_parent_path}/shared_memory_{port}.bin")
-        elif os_type == "Darwin":
-            mmap_file = os.path.join(f"{stardew_app_parent_path}/shared_memory_{port}.bin")
+        stardew_app_path = os.getenv("STARDEW_APP_PATH", "")
+        # STARDEW_APP_PATH may be either:
+        # - a full path to an exe (e.g. .../StardewModdingAPI.exe)
+        # - or a directory path (e.g. .../Stardew Valley)
+        # The mod creates shared_memory_{port}.bin under AppDomain.CurrentDomain.BaseDirectory
+        # which is the game/modding API base directory, so we align with that here.
+        if stardew_app_path and os.path.isdir(stardew_app_path):
+            stardew_base_dir = stardew_app_path
         else:
-            mmap_file = os.path.join(f"{stardew_app_parent_path}\shared_memory_{port}.bin")
+            stardew_base_dir = os.path.dirname(stardew_app_path) if stardew_app_path else ""
+
+        if not stardew_base_dir:
+            raise EnvironmentError(
+                "STARDEW_APP_PATH is not set or invalid. "
+                "Please set STARDEW_APP_PATH to your Stardew Valley (or SMAPI) install directory or executable path."
+            )
+        if os_type == "Linux":
+            mmap_file = os.path.join(stardew_base_dir, f"shared_memory_{port}.bin")
+        elif os_type == "Darwin":
+            mmap_file = os.path.join(stardew_base_dir, f"shared_memory_{port}.bin")
+        else:
+            mmap_file = os.path.join(stardew_base_dir, f"shared_memory_{port}.bin")
         self.mmap_file = mmap_file
         self.f = open(self.mmap_file, "r+b")
         self.mm = mmap.mmap(self.f.fileno(), self.mmap_size, access=mmap.ACCESS_WRITE)
